@@ -57,14 +57,18 @@ The upstream `js` tool is strict — anything beyond `code`, `timeout_ms` and `t
 
 ### Into DSH
 
+Option 1 (recommended): inside DSH, **Plugins → Add plugin**, then pick this directory. DSH links the checkout, so source edits take effect immediately.
+
+Option 2: install from the checkout with the same command this was verified with:
+
 ```powershell
-# from the cloned directory
-dsh plugin add D:\path\to\dsh-zcode-cua
+cd "D:\path\to\dsh-zcode-cua"
+dsh plugin --profile desktop add "link:$PWD"
 ```
 
-Or inside DSH: **Plugins → Add plugin**, then pick this directory.
+Restart DSH afterwards. The tool appears as `mcp__zcode-cua__js`, and the plugin row reads **ZCode computer control**.
 
-Restart DSH afterwards. The tool appears as `mcp__zcode-cua__js`.
+> **The package name must stay `dsh-zcode-cua`**, unscoped. The registration row points at the relative path `node_modules/dsh-zcode-cua/server/index.js`; that is what makes one file work on every machine, and it assumes the package is installed under the profile's `node_modules` under exactly that directory name.
 
 ### Skill (optional, strongly recommended)
 

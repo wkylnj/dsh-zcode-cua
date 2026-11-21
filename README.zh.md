@@ -57,14 +57,18 @@ DSH  ──MCP stdio──▶  本插件 server/index.js
 
 ### 装进 DSH
 
+方式一（推荐）：在 DSH 里 **插件 → 添加插件**，选中这个目录。DSH 会建一个软链接，之后改源码即时生效。
+
+方式二：从源码目录安装，与你机器上已验证的效果一致：
+
 ```powershell
-# 从 clone 下来的目录安装
-dsh plugin add D:\path\to\dsh-zcode-cua
+cd "D:\path\to\dsh-zcode-cua"
+dsh plugin --profile desktop add "link:$PWD"
 ```
 
-或者在 DSH 里：**插件 → 添加插件**，选中这个目录。
+装完重启 DSH。工具以 `mcp__zcode-cua__js` 出现，插件列表里是 **ZCode 电脑控制**。
 
-装完重启 DSH。工具以 `mcp__zcode-cua__js` 出现。
+> **包名必须是 `dsh-zcode-cua`**，不能带 scope。注册行里写的是相对路径 `node_modules/dsh-zcode-cua/server/index.js`，这是让同一个文件在别人机器上也能用的代价——它假定包被装在 profile 的 `node_modules` 下且目录名就是包名。
 
 ### 技能（可选，强烈建议）
 

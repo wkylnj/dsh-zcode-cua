@@ -19,3 +19,4 @@
 - Windows 专用。依赖 ZCode 安装目录里的原生 helper，不重新分发 ZCode 的任何二进制。
 - 没有屏幕上的操作提示（幽灵光标）——它需要 helper 进程内的常驻渲染调度器，这条链路上不存在。画中画小窗同理不可用。
 - Browser Use 未接入：上游需要宿主提供 `browserBroker`，本插件只接了 Computer Use 桥。
+- 注册行用相对路径 `node_modules/dsh-zcode-cua/server/index.js`，所以插件必须按包名 `dsh-zcode-cua` 安装（不带 scope）。从本地目录安装时 DSH 会建软链接，源码改动即时生效。
