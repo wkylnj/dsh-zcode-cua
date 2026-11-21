@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "ZCode computer control",
+    "description": "Drives native desktop apps through ZCode's Computer Use runtime: click, type, read the accessibility tree, take screenshots. Adds one tool, js, that runs JavaScript in a fresh Node kernel where agent.computerUse is available. Requires ZCode installed, and the helper's permission broker stays inside this plugin's own process. Off until you call the tool.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "ZCode 电脑控制",
+    "description": "通过 ZCode 的 Computer Use 运行时操作本机原生桌面应用：点击、打字、读取无障碍树、截图。只增加一个工具 js——在全新的 Node 内核里跑 JavaScript，其中 agent.computerUse 可用。需要本机已装 ZCode；helper 的权限 broker 只活在本插件自己的进程里。不调用工具就什么都不发生。",
+    "detail": "docs/DETAIL.md"
+  }
+}

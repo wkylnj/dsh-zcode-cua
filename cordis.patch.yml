@@ -1,0 +1,34 @@
+# Register the ZCode Computer Use MCP server.
+#
+# This bundle ships its own stdio MCP server (`server/index.js`). It spawns
+# ZCode's `node-repl-host`, resolves the installed cua-helper, and turns
+# Computer Use on by supplying the permission-broker environment the upstream
+# server requires.
+#
+# The `args` path is RELATIVE on purpose. It is resolved against the profile
+# directory, where every profile-installed bundle lives at
+# `node_modules/<package-name>`, so this file works on any machine without
+# naming a checkout location.
+#
+# Running from a source checkout instead (a linked local install)? Local linked
+# installs place the package under `node_modules/<package-name>` too, so the
+# same relative path keeps working. If you cloned this repository somewhere and
+# installed it by that directory, nothing here needs editing.
+- insert:
+    - id: zcode-cua
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: zcode-cua
+        transport: stdio
+        command: 'node'
+        args:
+          - 'node_modules/dsh-zcode-cua/server/index.js'
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 180000
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 10

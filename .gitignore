@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build output of any future tooling
+dist/
+build/
+*.tsbuildinfo
+
+# Local scratch from testing the plugin
+_shots/
+*.tmp

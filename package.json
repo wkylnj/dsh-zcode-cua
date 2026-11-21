@@ -1,0 +1,62 @@
+{
+  "name": "dsh-zcode-cua",
+  "displayName": "DSH ZCode Computer Control",
+  "version": "1.0.0",
+  "description": "把 ZCode 的电脑控制（Computer Use）接进 DeepSeek Harness：点击、打字、读无障碍树与截图。",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "computer-use",
+    "cua",
+    "zcode",
+    "mcp",
+    "mcp-server",
+    "gui-automation",
+    "windows"
+  ],
+  "license": "MIT",
+  "author": "wkylnj",
+  "type": "module",
+  "main": "./server/index.js",
+  "bin": {
+    "dsh-zcode-cua": "./server/index.js"
+  },
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./server/index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "server",
+    "locale/*.json",
+    "docs",
+    "skills",
+    "icon.svg",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wkylnj/dsh-zcode-cua.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wkylnj/dsh-zcode-cua/issues"
+  },
+  "homepage": "https://github.com/wkylnj/dsh-zcode-cua#readme"
+}

@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repository so the JavaScript and YAML
+# read the same on every platform. Git still checks out with the platform's
+# native endings for editors that want them.
+* text=auto eol=lf
+
+# Files that must stay byte-exact.
+*.svg text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
