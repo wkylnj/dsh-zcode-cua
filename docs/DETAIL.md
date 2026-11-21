@@ -1,1 +1,1 @@
-![一个桌面窗口、它的无障碍树，和一个按元素索引点击的指针](preview.svg)
+![A desktop window, its accessibility tree, and a pointer clicking an element by index](preview.svg)

@@ -11,7 +11,7 @@
 - 一个 MCP 工具 `mcp__zcode-cua__js`，把 ZCode 的 Computer Use 运行时接进 DSH。每次调用在全新的 Node.js 内核里跑顶层 `await`，模型用代码点击、打字、读无障碍树、截图。
 - 自动解析 ZCode 的三处安装位置：`node-repl-host`（上游 MCP server）、`computer-use`（客户端 SDK 与文档）、`cua-helper`（Windows 原生 helper）。ZCode 不在默认位置时按卸载注册表的 `InstallLocation`、`ZCODE_HOME`、常见安装目录依次探测，三者都支持环境变量覆盖。
 - MCP 1.x 与现代协议（`2026-07-28`）双向适配：legacy 客户端本地应答握手，工具列表与调用转发上游，并剥掉现代协议独有的 `resultType` / `ttlMs` / `cacheScope` 字段。
-- 插件展示元数据（中英双语）、详情页图片与图标。
+- 插件展示元数据（中英双语）：`locale/en.json` 指向 `docs/DETAIL.md`，`locale/zh.json` 指向 `docs/DETAIL.zh.md`，两份文档各有自己语言的替代文本、共用同一张无文字插图。
 - `skills/zcode-computer-use/SKILL.md`：Computer Use 的完整操作指南（无障碍优先、元素索引优先、坐标兜底、错误与重试语义）。
 
 ### 说明
