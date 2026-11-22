@@ -123,13 +123,15 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 | `ZCODE_CUA_PLUGIN_ROOT` | `computer-use` 插件根目录（含 `scripts/computer-use-client.mjs`） |
 | `ZCODE_BRIDGE_HELPER_ROOT` | `cua-helper` 目录（含 `build/Release/ax_native.node`） |
 | `DSH_ZCODE_CUA_NO_OVERLAY` | 设为 `1` 即完全关闭屏幕提示浮层 |
+| `DSH_ZCODE_CUA_KEEP_GHOST_CURSOR` | 设为 `1` 保留 ZCode 自带的指针浮层；默认会被抑制，屏幕上只留上面这层提示 |
 
 平时不需要设——插件会从**卸载注册表**（`InstallLocation`）、`ZCODE_HOME`、以及常见安装位置三处去找 ZCode。
 
 ## 限制
 
 - **Windows 专用。** 依赖 ZCode 安装目录里的 `resources/tools/cua-helper`（`ax_native.node` 原生模块）。ZCode 在 Windows 上暂时关闭了对端签名校验（`windows-helper.js` 的 `WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN = true`），**这不是本插件打开的门**；ZCode 一旦把这道门关上，本插件也随之失效。
-- **没有幽灵光标，也没有画中画。** ZCode 的幽灵光标只在 helper 处于「请求作用域」内才绘制：`windows-helper.js` 在每个原生动作前后分别调 `ghostSetRequestSession(session)` 和 `ghostSetRequestSession(null)`，而 **null 会话会主动抑制浮层**。这个作用域来自 `params.pip_session_context`，上游只在它的 MCP tool handler 里填——填的值来自一个 `AsyncLocalStorage` 存储；而 Computer Use 的动作走的是 cua-broker socket，根本不经过那个存储，所以这条路径上该字段永远缺席。桌面端能显示徽标，是因为它跑的是另一份实现、那份会传。画中画小窗（PiP）不可用是另一回事：`ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false。上面说的横幅与四边光晕替代了这两者，而且它们保证不会出现在截图里。
+- **没有画中画小窗。** `ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false，没有可开启的东西。上面说的横幅与四边光晕补上了这块视觉反馈，而且它们保证不会出现在截图里。
+- **ZCode 自带的指针浮层是被主动抑制的。** 上游启动原生 helper 时**无条件**追加 `--ghost-cursor-overlay`，没有任何设置或环境变量能关掉，所以 `server/helper-launcher.js` 在 exec 真 helper 之前把这个参数剥掉。两个提示对「正在发生什么」说法不一致比只有一个更糟，而且 ZCode 那个浮层是普通顶层窗口，任何全屏抓图都会带上它。设 `DSH_ZCODE_CUA_KEEP_GHOST_CURSOR=1` 可以保留。即使保留，它也只在「请求作用域」内绘制，而这条路径从不提供该作用域（原因记在 1.1.0）。
 - **Browser Use 不可用。** 上游 `node-repl-host` 实现了 Browser Use 桥，但它需要宿主提供 `browserBroker`，本插件只接了 Computer Use 桥。要浏览器操作请用 DSH 自己的 Browser Use。
 - **每个 `js` 调用都是新内核。** 变量不跨调用存活，所以每次都要重新 bootstrap。
 - **不要用两个会话同时操作桌面。** 整条链路上只有一份 helper：`@deepseek-ai/dsh-mcp-client` 是 **profile 级**插件，DSH 只起一个实例、一个子进程。真正把两个会话隔开的是上游的串行锁——桥接层给所有 DSH 会话传的是同一个进程级 `session_id`（`dsh-<uuid>`，进程启动时生成一次），上游 `server.js` 用 `serialized(sessionKey, ...)` 把每次 `js` 执行按这个 id 排队，所以不同会话的调用只能一个接一个地跑。好处是两个会话不会同时操作桌面，代价是一个会话的长调用会把其它会话的 `js` 调用全堵在后面，直到它返回。桌面操作请集中在单个会话里做；其它会话在另一个 DSH 窗口里跑别的事、不要用 Computer Use，或者等第一个会话做完。
@@ -144,23 +146,24 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 ## 开发
 
 ```
-server/paths.js     解析 ZCode 三处安装位置
-server/index.js     MCP stdio 服务端；spawn 上游并翻译协议
-server/overlay.js   管理提示浮层的宿主进程，并用它包住每次工具调用
-server/overlay/     Overlay.cs（Win32 分层窗口）与 host.ps1（常驻驱动）
-test/smoke.mjs      端到端：握手、tools/list、一次真实 js 调用、取消通知
-test/overlay.mjs    端到端：调用期间浮层出现，结束后消失
-skills/             技能（手动安装到 DSH 技能目录）
-locale/             插件展示元数据
-docs/               详情页图片
-cordis.patch.yml    注册行
+server/paths.js            解析 ZCode 三处安装位置
+server/index.js            MCP stdio 服务端；spawn 上游并翻译协议
+server/overlay.js          管理提示浮层的宿主进程，并用它包住每次工具调用
+server/overlay/            Overlay.cs（Win32 分层窗口）与 host.ps1（常驻驱动）
+server/helper-launcher.js  剥掉上游强加的 --ghost-cursor-overlay 后再 exec 真 helper
+test/smoke.mjs             端到端：握手、tools/list、一次真实 js 调用、取消通知
+test/overlay.mjs           端到端：调用期间浮层出现，结束后消失
+skills/                    技能（手动安装到 DSH 技能目录）
+locale/                    插件展示元数据
+docs/                      详情页图片
+cordis.patch.yml           注册行
 ```
 
 没有构建步骤，没有运行时依赖，纯 ESM。改完重启 DSH 生效。
 
 ```sh
 node test/smoke.mjs      # 5 项检查
-node test/overlay.mjs    # 7 项检查
+node test/overlay.mjs    # 9 项检查
 ```
 
 ## 许可

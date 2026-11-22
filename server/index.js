@@ -22,8 +22,22 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveRuntime, describeRuntime, runtimeIsComplete } from "./paths.js";
 import { createOverlay } from "./overlay.js";
+
+/**
+ * Launcher the upstream runs instead of the helper entry.
+ *
+ * The upstream appends `--ghost-cursor-overlay` to whatever entry it launches
+ * and offers no way to opt out, so the entry it gets is this launcher: it drops
+ * the flag and execs the real helper. See `server/helper-launcher.js`.
+ */
+const HELPER_LAUNCHER = join(dirname(fileURLToPath(import.meta.url)), "helper-launcher.js");
+
+/** Env var the launcher reads to find the real helper entry. */
+const HELPER_ENTRY_ENV = "DSH_ZCODE_CUA_HELPER_ENTRY";
 
 const KEY_PROTOCOL = "io.modelcontextprotocol/protocolVersion";
 const KEY_CAPS = "io.modelcontextprotocol/clientCapabilities";
@@ -102,15 +116,19 @@ function spawnUpstream() {
       process.env.ZCODE_CUA_PERMISSION_BROKER_SOCKET?.trim() ||
       `\\\\.\\pipe\\zcode-cua-helper-${randomUUID().replace(/-/g, "").slice(0, 16)}`,
     // How to start the native helper. `command` runs the helper's entry with
-    // Node; the upstream appends `--socket`, `--parent-pid` and the overlay flag.
+    // Node; the upstream appends `--socket`, `--parent-pid` and, unconditionally,
+    // `--ghost-cursor-overlay`. That flag is why the entry below is our launcher
+    // rather than the helper itself: the launcher strips the flag and execs the
+    // real helper, so the stock pointer overlay never appears next to the banner
+    // this plugin draws. See `server/helper-launcher.js`.
     ...(runtime.helperEntry && runtime.helperAddon
       ? {
           ZCODE_CUA_WIN_HELPER_RECIPE: JSON.stringify({
             command: process.execPath,
-            entryPath: runtime.helperEntry,
+            entryPath: HELPER_LAUNCHER,
             root: runtime.helperRoot,
             addonPath: runtime.helperAddon,
-            commandEnv: {},
+            commandEnv: { [HELPER_ENTRY_ENV]: runtime.helperEntry },
             hostPid: process.pid,
           }),
         }

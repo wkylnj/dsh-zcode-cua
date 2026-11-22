@@ -2,6 +2,22 @@
 
 本文件记录本仓库的重要变更。
 
+## 1.2.1 — 2026-11-22
+
+三个实测反馈的修复：浮层文字乱码、短调用看不到浮层、ZCode 自带的幽灵光标还在。
+
+### 修复
+
+- **横幅中文乱码。** Node 以 UTF-8 写 stdin，而 PowerShell 5.1 的 `[Console]::In.ReadLine()` 按系统 OEM 代码页（中文 Windows 是 936/GBK）解码，中文全变成乱码。`server/overlay/host.ps1` 改用显式 UTF-8 流：`New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8)` 与对应的 `StreamWriter`，`$utf8 = New-Object System.Text.UTF8Encoding($false)`（不能带 BOM，否则 JSON 行解析失败）。
+- **短调用看不到浮层。** `enter()` 同步把「已显示」置位，而真正的 `show` 是异步的，首次调用还要先编译 C#（约 1–2 秒）。比编译更短的调用会在窗口建好之前就发出 `hide`，于是浮层永远没机会出现——这就是「有时候被控制了但没有浮层」。现在 `leave()` 会等未回话的 `show` 再拆，并保证最短可见时间 `MIN_VISIBLE_MS = 900`；新调用到达时取消待执行的 `hide`，避免上一轮的延迟关闭打断下一轮。
+- **横幅不更新为本次动作。** 浮层已经在屏幕上时再次 `enter()` 会重绘，让第二行显示**这一次**调用做的事，而不是上一次留下的文字。
+- **ZCode 的幽灵光标又出现了。** 上游 `node-repl-host` 启动原生 helper 时**无条件**追加 `--ghost-cursor-overlay`（`server.js:121868`，没有任何设置或环境变量能关掉），helper 于是自带一个常驻指针浮层。新增 `server/helper-launcher.js`：helper recipe 的 `entryPath` 指向它，它剥掉这个参数后再 exec 真 helper。不改任何上游文件；`DSH_ZCODE_CUA_KEEP_GHOST_CURSOR=1` 可恢复原状。
+
+### 变更
+
+- `test/overlay.mjs` 从 7 项增到 9 项，新增「极短调用也要出现浮层」与「之后要消失」两条回归。
+- 环境变量表新增 `DSH_ZCODE_CUA_KEEP_GHOST_CURSOR`。
+
 ## 1.2.0 — 2026-11-22
 
 新增屏幕上的操作提示浮层：`js` 调用执行期间，用户能看到 AI 正在操作这台电脑，而模型截的图里看不到它。

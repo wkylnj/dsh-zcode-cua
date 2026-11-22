@@ -69,12 +69,20 @@ try {
 
 [DshZcodeCua.Overlay]::Init()
 
+# The Node bridge writes UTF-8. `[Console]::In` would decode it with the console
+# output code page instead (936/GBK on a Chinese Windows), turning every Chinese
+# action line into mojibake, so the channel is opened as explicit UTF-8 streams.
+# `$false` = no BOM: the parent parses each line as JSON and a BOM would break it.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8)
+$stdout = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput(), $utf8)
+$stdout.AutoFlush = $true
+
 function Reply([bool]$ok, [string]$detail) {
     $payload = @{ ok = $ok }
     if ($detail) { $payload.detail = $detail }
     $json = $payload | ConvertTo-Json -Compress
-    [Console]::Out.WriteLine($json)
-    [Console]::Out.Flush()
+    $stdout.WriteLine($json)
 }
 
 Reply $true 'ready'
@@ -82,7 +90,7 @@ Reply $true 'ready'
 # Blocking read loop. `ReadLine` returning null means stdin closed: the parent
 # died or shut down, so this process must not outlive it.
 while ($true) {
-    $line = [Console]::In.ReadLine()
+    $line = $stdin.ReadLine()
     if ($null -eq $line) { break }
     $line = $line.Trim()
     if ($line -eq '') { continue }

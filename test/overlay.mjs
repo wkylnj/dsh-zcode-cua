@@ -166,6 +166,25 @@ async function main() {
     check("unknown tool: no overlay", unknown !== undefined && unknown.length === 0,
       unknown === undefined ? "probe failed" : `${unknown.length} window(s)`);
     await waitFor(3, 20_000);
+
+    // Regression: a call shorter than the first-use compile used to queue its
+    // hide ahead of the windows, so the indicator never appeared at all. The
+    // minimum-visible window is what makes a 200 ms cell still show up.
+    send({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "js", arguments: { title: "short call", code: "nodeRepl.write('short')" } },
+    });
+    await sleep(350);
+    const shortCall = visibleOverlayWindows();
+    check("short call: overlay still appears", shortCall !== undefined && shortCall.length >= 5,
+      shortCall === undefined ? "probe failed" : `${shortCall.length} window(s)`);
+    await waitFor(4, 60_000);
+    await sleep(1500);
+    const shortGone = visibleOverlayWindows();
+    check("short call: overlay goes away", shortGone !== undefined && shortGone.length === 0,
+      shortGone === undefined ? "probe failed" : `${shortGone.length} window(s)`);
   } finally {
     child.stdin.end();
     child.kill();

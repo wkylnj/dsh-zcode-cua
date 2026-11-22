@@ -61,6 +61,15 @@ const COMMAND_TIMEOUT_MS = 4000;
 const RESPAWN_DELAY_MS = 5000;
 
 /**
+ * How long the indicator stays up at minimum, even if the call finished sooner.
+ *
+ * First use compiles the C# (~1 s), so a call that takes 300 ms would otherwise
+ * raise the windows and tear them down within a few frames — technically
+ * working, but the user sees nothing and concludes the indicator is broken.
+ */
+const MIN_VISIBLE_MS = 900;
+
+/**
  * Resolve the PowerShell executable.
  *
  * `powershell.exe` (5.1) is used rather than `pwsh` on purpose: 5.1 is present on
@@ -263,12 +272,24 @@ export function createOverlay(options = {}) {
   const host = new OverlayHost({ log });
   let depth = 0;
   let shown = false;
+  // The reply to a `show` that has not come back yet. First use pays for the
+  // C# compile (~1-2 s), so a short tool call can finish while the windows are
+  // still being created; `leave` must wait for that reply before hiding, or the
+  // overlay never gets a chance to appear at all.
+  let showing;
+  let raisedAt = 0;
+  // A hide waiting out MIN_VISIBLE_MS. A new call arriving in that window must
+  // cancel it, otherwise the stale hide fires in the middle of the next call and
+  // blanks the indicator while the computer is still being driven.
+  let hideTimer;
 
   const show = (phase, text) => {
     if (!enabled) return;
     const extra = { phase };
     if (typeof text === "string" && text.trim() !== "") extra.text = text.trim();
-    void host.command("show", extra).then((reply) => {
+    raisedAt = Date.now();
+    showing = host.command("show", extra).then((reply) => {
+      showing = undefined;
       if (!reply.ok) log(`overlay: show failed — ${reply.detail}`);
     });
   };
@@ -295,8 +316,17 @@ export function createOverlay(options = {}) {
     enter(text) {
       if (!enabled) return;
       depth += 1;
+      if (hideTimer !== undefined) {
+        clearTimeout(hideTimer);
+        hideTimer = undefined;
+      }
       if (depth === 1 && !shown) {
         shown = true;
+        show("working", text);
+      } else if (depth === 1 && shown) {
+        // Already up (the previous call was still inside its minimum-visible
+        // window, or two calls overlap). Repaint so the banner names THIS call
+        // rather than the one before it.
         show("working", text);
       }
     },
@@ -305,10 +335,28 @@ export function createOverlay(options = {}) {
     leave() {
       if (!enabled) return;
       depth = Math.max(0, depth - 1);
-      if (depth === 0 && shown) {
-        shown = false;
-        hide();
-      }
+      if (depth > 0 || !shown) return;
+      shown = false;
+      // Two things have to be true before tearing the windows down: the show
+      // must have been answered (otherwise the hide jumps ahead of the windows
+      // and the indicator never appears), and it must have been up long enough
+      // to be seen. Both are cheap to wait for and both fix a real complaint.
+      const wait = Math.max(0, MIN_VISIBLE_MS - (Date.now() - raisedAt));
+      const pending = showing;
+      const teardown = () => {
+        if (wait > 0) {
+          hideTimer = setTimeout(() => {
+            hideTimer = undefined;
+            // Only lower it if nothing took it back up meanwhile.
+            if (!shown) hide();
+          }, wait);
+          hideTimer.unref?.();
+        } else {
+          hide();
+        }
+      };
+      if (pending !== undefined) void pending.then(teardown, teardown);
+      else teardown();
     },
 
     /** Diagnostic snapshot for the smoke test. */

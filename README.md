@@ -123,13 +123,15 @@ When layout resolution fails — ZCode installed somewhere unusual — override 
 | `ZCODE_CUA_PLUGIN_ROOT` | the `computer-use` plugin root (holds `scripts/computer-use-client.mjs`) |
 | `ZCODE_BRIDGE_HELPER_ROOT` | the `cua-helper` directory (holds `build/Release/ax_native.node`) |
 | `DSH_ZCODE_CUA_NO_OVERLAY` | set to `1` to disable the on-screen indicator entirely |
+| `DSH_ZCODE_CUA_KEEP_GHOST_CURSOR` | set to `1` to keep ZCode's own pointer overlay; by default it is suppressed so only the indicator above is on screen |
 
 Usually none are needed: the plugin looks for ZCode in the **uninstall registry** (`InstallLocation`), in `ZCODE_HOME`, and in the conventional install locations.
 
 ## Limitations
 
 - **Windows only.** It needs `resources/tools/cua-helper` from ZCode's install directory (the `ax_native.node` native module). ZCode currently has peer-identity verification disabled on Windows (`WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN = true` in `windows-helper.js`) — **this plugin did not open that gate**; the day ZCode closes it, this plugin stops working.
-- **No ghost cursor or picture-in-picture.** ZCode's ghost cursor only paints while the helper is inside a *request scope*: `windows-helper.js` calls `ghostSetRequestSession(session)` around each native action and `ghostSetRequestSession(null)` afterwards, and a null session actively suppresses the overlay. The scope comes from `params.pip_session_context`, which the upstream fills in from an `AsyncLocalStorage` store populated **only** by its MCP tool handler — Computer Use actions take the cua-broker socket instead and never touch that store, so the field is always absent on this path. The desktop app shows the badge because it runs a second implementation that does supply it. Picture-in-picture is unavailable for an unrelated reason: `ax_native.node` exports no `pip*` functions at all and `pipSessionEnabled` is always false on Windows. The banner and screen glow described above replace both, and unlike them it is guaranteed absent from screenshots.
+- **No picture-in-picture.** `ax_native.node` exports no `pip*` functions at all and `pipSessionEnabled` is always false on Windows, so there is nothing to enable. The banner and screen glow described above stand in for the missing visual feedback, and unlike a cursor overlay they are guaranteed absent from screenshots.
+- **ZCode's own pointer overlay is suppressed on purpose.** The upstream launches the native helper with `--ghost-cursor-overlay` unconditionally — no setting or environment variable turns it off — so `server/helper-launcher.js` strips that flag before exec'ing the real helper. Two indicators disagreeing about what is happening is worse than one, and the ZCode overlay is a plain top-level window that any full-screen capture picks up. Set `DSH_ZCODE_CUA_KEEP_GHOST_CURSOR=1` to keep it. (Even when kept, it only paints inside a request scope that this path never supplies, for the reason recorded in 1.1.0.)
 - **No Browser Use.** Upstream `node-repl-host` implements a Browser Use bridge, but it needs a `browserBroker` from the host and this plugin only wires the Computer Use bridge. Use DSH's own Browser Use for web pages.
 - **Every `js` call is a fresh kernel.** Variables do not survive between calls, so bootstrap every time.
 - **Do not drive the desktop from two sessions at once.** There is only one helper in the whole chain: `@deepseek-ai/dsh-mcp-client` is a profile-level plugin, so DSH runs a single instance and a single child process. What actually keeps two sessions apart is the upstream serialisation lock — the bridge passes the same process-wide `session_id` (`dsh-<uuid>`, generated once at startup) for every DSH session, and upstream `server.js` wraps each `js` execution in `serialized(sessionKey, ...)` keyed on that id, so calls from different sessions queue behind one another. Two sessions therefore cannot click at the same time, but a long call in one session blocks every other session's `js` calls until it returns. Keep desktop work in a single session; run other sessions in a different DSH window without Computer Use, or wait for the first one to finish.
@@ -144,23 +146,24 @@ Usually none are needed: the plugin looks for ZCode in the **uninstall registry*
 ## Development
 
 ```
-server/paths.js     resolves ZCode's three install locations
-server/index.js     the MCP stdio server; spawns upstream and translates the protocol
-server/overlay.js   owns the indicator's host process and brackets tool calls with it
-server/overlay/     Overlay.cs (the Win32 layered window) and host.ps1 (its resident driver)
-test/smoke.mjs      end-to-end: handshake, tools/list, one real js call, cancellation
-test/overlay.mjs    end-to-end: the indicator appears during a call and leaves afterwards
-skills/             the skill (installed manually into a DSH skill directory)
-locale/             plugin display metadata
-docs/               detail page image
-cordis.patch.yml    the registration row
+server/paths.js          resolves ZCode's three install locations
+server/index.js          the MCP stdio server; spawns upstream and translates the protocol
+server/overlay.js        owns the indicator's host process and brackets tool calls with it
+server/overlay/          Overlay.cs (the Win32 layered window) and host.ps1 (its resident driver)
+server/helper-launcher.js  drops the upstream's forced --ghost-cursor-overlay, then execs the helper
+test/smoke.mjs           end-to-end: handshake, tools/list, one real js call, cancellation
+test/overlay.mjs         end-to-end: the indicator appears during a call and leaves afterwards
+skills/                  the skill (installed manually into a DSH skill directory)
+locale/                  plugin display metadata
+docs/                    detail page image
+cordis.patch.yml         the registration row
 ```
 
 No build step, no runtime dependencies, pure ESM. Restart DSH after a change.
 
 ```sh
 node test/smoke.mjs      # 5 checks
-node test/overlay.mjs    # 7 checks
+node test/overlay.mjs    # 9 checks
 ```
 
 ## License
