@@ -33,6 +33,24 @@ await app.getScreenshot();
 
 The full API reference is `agent.documentation.get("computer-use")`, fetched on demand.
 
+## The per-session switch
+
+**A new session cannot drive the desktop.** The `js` tool stays visible in the tool list, but every call is denied until the session opts in:
+
+> Computer control is off for this session. Ask the user to switch it on with the "Computer control" toggle under the message box, then call this tool again.
+
+The switch is a pill at the right end of the row under the message box — `电脑控制 · 已关闭` / `电脑控制 · 已开启`. One click flips it, and only for the session you are looking at.
+
+Why a switch rather than a setting: this tool clicks and types into whatever holds the keyboard. A profile-wide setting would mean one yes turns it on for every conversation, including the one that just asked a question and got an agent holding the mouse. Why a denial rather than hiding the tool: a tool missing from the schema reads as "the plugin is not installed", and the model would have no way to tell you which switch to flip.
+
+Three details worth knowing:
+
+- **The grant is per session and lives in memory.** Restarting DSH puts every session back to off. That is the safe direction for a capability that moves your mouse, so it is deliberate rather than a missing feature.
+- **A call with no session attached is denied**, even while another session is on. "No session" is not a session that said yes.
+- **Other tools are unaffected.** The guard only answers for `mcp__zcode-cua__js`; a guard that denied tools it does not own would quietly break unrelated plugins.
+
+The switch shows a third state — `电脑控制 · 状态未知` — when the host route cannot be reached. "Off" and "could not ask" must not look alike, or a broken switch reads as a working one.
+
 ## The on-screen indicator
 
 While a `js` call is running, a click-through overlay tells the user the computer is being driven: a blue glow around every screen edge, a banner, and a soft ring around the pointer. The banner's first line is always *DSH 正在控制电脑*; the second line is **what this call is doing**, taken from the `js` tool's required `title` argument — the same sentence the model already writes for the user.
@@ -147,21 +165,26 @@ Usually none are needed: the plugin looks for ZCode in the **uninstall registry*
 
 ```
 server/paths.js          resolves ZCode's three install locations
+index.js                 the Host half: the per-session tool guard and the switch's routes
+client.js                the composer switch (browser module)
 server/index.js          the MCP stdio server; spawns upstream and translates the protocol
+server/access.js         the grant table and the guard body
 server/overlay.js        owns the indicator's host process and brackets tool calls with it
 server/overlay/          Overlay.cs (the Win32 layered window) and host.ps1 (its resident driver)
 server/helper-launcher.js  drops the upstream's forced --ghost-cursor-overlay, then execs the helper
 test/smoke.mjs           end-to-end: handshake, tools/list, one real js call, cancellation
 test/overlay.mjs         end-to-end: the indicator appears during a call and leaves afterwards
+test/access.mjs          unit: the guard denies, allows, and scopes grants per session
 skills/                  the skill (installed manually into a DSH skill directory)
 locale/                  plugin display metadata
 docs/                    detail page image
-cordis.patch.yml         the registration row
+cordis.patch.yml         the two registration rows
 ```
 
 No build step, no runtime dependencies, pure ESM. Restart DSH after a change.
 
 ```sh
+node test/access.mjs     # 13 checks
 node test/smoke.mjs      # 5 checks
 node test/overlay.mjs    # 9 checks
 ```

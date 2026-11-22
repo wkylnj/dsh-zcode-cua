@@ -1,9 +1,16 @@
-# Register the ZCode Computer Use MCP server.
+# Two rows, two jobs.
 #
-# This bundle ships its own stdio MCP server (`server/index.js`). It spawns
-# ZCode's `node-repl-host`, resolves the installed cua-helper, and turns
-# Computer Use on by supplying the permission-broker environment the upstream
-# server requires.
+# `zcode-cua` registers the stdio MCP server that actually drives the desktop:
+# it spawns ZCode's `node-repl-host`, resolves the installed cua-helper, and
+# turns Computer Use on by supplying the permission-broker environment the
+# upstream server requires.
+#
+# `zcode-cua-access` is this package's own Host half (`index.js`). It holds the
+# per-session switch: a tool guard that denies the `js` tool until the session
+# opts in from the composer, plus the two small routes that switch reads and
+# writes. The gate has to sit here rather than in the MCP server — a check
+# inside the child process would still have started it, and the point is that a
+# denied call never reaches the desktop at all.
 #
 # The `args` path is RELATIVE on purpose. It is resolved against the profile
 # directory, where every profile-installed bundle lives at
@@ -15,6 +22,8 @@
 # same relative path keeps working. If you cloned this repository somewhere and
 # installed it by that directory, nothing here needs editing.
 - insert:
+    - id: zcode-cua-access
+      name: 'dsh-zcode-cua'
     - id: zcode-cua
       name: '@deepseek-ai/dsh-mcp-client'
       config:

@@ -33,6 +33,24 @@ await app.getScreenshot();
 
 完整 API 参考在 `agent.documentation.get("computer-use")`，按需取。
 
+## 按会话开关
+
+**新会话不能操作桌面。** `js` 工具在工具列表里照常可见，但每一次调用都会被拒绝，直到这个会话自己打开开关：
+
+> Computer control is off for this session. Ask the user to switch it on with the "Computer control" toggle under the message box, then call this tool again.
+
+开关是输入框下方那一行最右边的一枚胶囊：`电脑控制 · 已关闭` / `电脑控制 · 已开启`。点一下切换，只对当前这个会话生效。
+
+为什么是开关而不是设置项：这个工具会点击、会往当前持有键盘的窗口里打字。做成全局设置意味着一次同意就对所有对话生效——包括那个只是问了个问题、却拿到一个会动鼠标的 agent 的对话。为什么是拒绝而不是把工具藏起来：工具从 schema 里消失会被读成「插件没装」，模型就没法告诉你该去开哪个开关。
+
+三点值得知道：
+
+- **授权按会话、存在内存里。** 重启 DSH 后所有会话回到关闭。对一个会移动你鼠标的能力来说这是安全的方向，所以是刻意的，不是缺功能。
+- **没有会话可归属的调用一律拒绝**，即使别的会话已经开着。「没有会话」不等于「会话说了可以」。
+- **其它工具不受影响。** 守卫只对 `mcp__zcode-cua__js` 作答；一个连别人工具一起拒的守卫会悄悄弄坏无关插件。
+
+宿主路由够不着时开关会显示第三种状态 `电脑控制 · 状态未知`。「关闭」和「问不到」不能长得一样，否则一个坏掉的开关看起来跟好的一样。
+
 ## 屏幕上的提示浮层
 
 `js` 调用执行期间，屏幕上会出现一层可穿透的提示：四边蓝色光晕、顶部居中横幅，以及光标周围一圈柔光。横幅第一行固定是「DSH 正在控制电脑」，第二行是**这次调用正在做的事**——取自 `js` 工具必填的 `title` 参数，模型本来就要用它写一句面向用户的说明。
@@ -147,21 +165,26 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 
 ```
 server/paths.js            解析 ZCode 三处安装位置
+index.js                   宿主侧：按会话的工具守卫与开关的两条路由
+client.js                  输入栏下方的开关（浏览器模块）
 server/index.js            MCP stdio 服务端；spawn 上游并翻译协议
+server/access.js           授权表与守卫本体
 server/overlay.js          管理提示浮层的宿主进程，并用它包住每次工具调用
 server/overlay/            Overlay.cs（Win32 分层窗口）与 host.ps1（常驻驱动）
 server/helper-launcher.js  剥掉上游强加的 --ghost-cursor-overlay 后再 exec 真 helper
 test/smoke.mjs             端到端：握手、tools/list、一次真实 js 调用、取消通知
 test/overlay.mjs           端到端：调用期间浮层出现，结束后消失
+test/access.mjs            单元：守卫会拒绝、会放行，且授权按会话隔离
 skills/                    技能（手动安装到 DSH 技能目录）
 locale/                    插件展示元数据
 docs/                      详情页图片
-cordis.patch.yml           注册行
+cordis.patch.yml           两条注册行
 ```
 
 没有构建步骤，没有运行时依赖，纯 ESM。改完重启 DSH 生效。
 
 ```sh
+node test/access.mjs     # 13 项检查
 node test/smoke.mjs      # 5 项检查
 node test/overlay.mjs    # 9 项检查
 ```
