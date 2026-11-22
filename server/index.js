@@ -35,6 +35,20 @@ const SERVER_VERSION = "1.0.0";
 /** Result fields only modern MCP clients understand. */
 const MODERN_ONLY_FIELDS = ["resultType", "ttlMs", "cacheScope"];
 
+/**
+ * How long one forwarded request may wait for the upstream.
+ *
+ * Generous on purpose: a `js` call can legitimately run for two minutes
+ * (`node-repl-host` caps a cell at 120 s) and `toolCallTimeoutMs` in
+ * `cordis.patch.yml` is 180 s. This ceiling only exists to stop a *lost* answer
+ * from pinning a promise forever, so it sits above every legitimate duration
+ * rather than policing them.
+ */
+const REQUEST_TIMEOUT_MS = 240_000;
+
+/** Set once a shutdown has begun, so an upstream exit is not read as a crash. */
+let shuttingDown = false;
+
 const runtime = resolveRuntime();
 
 /**
@@ -112,9 +126,36 @@ let nextId = 1;
 
 function upstreamRequest(method, params) {
   const id = nextId++;
+  const child = upstream;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    upstream.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      reject(new Error("upstream MCP server is not running"));
+      return;
+    }
+    // A request whose answer never arrives must not pin a promise forever: the
+    // caller (a `tools/call`) would hang until DSH's own timeout, and the entry
+    // would keep the child's closure alive. Fail it on its own clock instead.
+    const timer = setTimeout(() => {
+      if (pending.delete(id)) reject(new Error(`upstream did not answer ${method} within ${REQUEST_TIMEOUT_MS}ms`));
+    }, REQUEST_TIMEOUT_MS);
+    timer.unref?.();
+    pending.set(id, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    try {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    } catch (error) {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -145,9 +186,27 @@ upstream.stdout.on("data", (chunk) => {
 });
 
 upstream.stderr.on("data", (chunk) => process.stderr.write(chunk));
-upstream.on("close", (code) => {
-  process.stderr.write(`[dsh-zcode-cua] upstream exited (code ${code})\n`);
-  process.exit(0);
+upstream.on("close", (code, signal) => {
+  // Every in-flight request would otherwise wait for its own timeout while the
+  // client has already been told nothing. Fail them now, with the reason.
+  const reason = new Error(
+    `upstream MCP server exited (code ${code}${signal ? `, signal ${signal}` : ""})`,
+  );
+  for (const [id, entry] of pending) {
+    pending.delete(id);
+    entry.reject(reason);
+  }
+  // The exit code alone cannot tell "DSH is shutting down" from "ZCode's server
+  // crashed": a child killed by a signal, or one that died on its own while the
+  // parent is still alive, is a crash. Exiting 0 in that case told DSH the MCP
+  // server had finished normally, so its `reconnect` policy never fired and the
+  // tools stayed missing until DSH restarted. Exit non-zero and let that policy
+  // do its job.
+  const crashed = signal !== null || !shuttingDown;
+  process.stderr.write(
+    `[dsh-zcode-cua] upstream exited (code ${code}${signal ? `, signal ${signal}` : ""})${crashed ? "; reporting a failure so the client may reconnect" : ""}\n`,
+  );
+  process.exit(crashed ? 1 : 0);
 });
 
 // ── client side ─────────────────────────────────────────────────────────────
@@ -233,6 +292,27 @@ async function forwardModern(message) {
   }
 }
 
+/**
+ * Forward one notification upstream, verbatim apart from the envelope.
+ *
+ * Notifications are fire-and-forget: the upstream answers nothing, so there is
+ * no request id to correlate and no reply to write back. A write failure is
+ * reported once and swallowed — losing a cancellation must not also take down
+ * the connection that is about to be told to stop.
+ */
+async function forwardNotification(message) {
+  const { method, params } = message;
+  try {
+    upstream.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method, params: { ...(params ?? {}), _meta: envelope(params?._meta) } })}\n`,
+    );
+  } catch (error) {
+    process.stderr.write(
+      `[dsh-zcode-cua] could not forward ${method}: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
 async function handleLegacy(message) {
   const { id, method, params } = message;
 
@@ -277,8 +357,29 @@ async function handleLegacy(message) {
   write({ jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${method}` } });
 }
 
+/**
+ * Notifications that must reach the upstream even though they carry no `id`.
+ *
+ * `notifications/cancelled` is the one that matters: DSH cancels a tool call
+ * when the user interrupts, and the upstream turns that into an aborted `js`
+ * cell. Dropping it here — as a blanket "no id means nothing to forward" does —
+ * leaves the native action running after the user has stopped it: clicks keep
+ * landing and the ghost cursor keeps moving on a turn nobody is waiting for.
+ * The others are forwarded so the upstream's own state stays consistent.
+ */
+const FORWARDED_NOTIFICATIONS = new Set([
+  "notifications/cancelled",
+  "notifications/progress",
+  "notifications/roots/list_changed",
+]);
+
 function handleMessage(message) {
-  if (message.id === undefined) return;
+  if (message.id === undefined) {
+    if (typeof message.method === "string" && FORWARDED_NOTIFICATIONS.has(message.method)) {
+      void forwardNotification(message);
+    }
+    return;
+  }
   if (!clientIsModern && !legacyHandshakeSeen && message.method !== "initialize") {
     if (message.method === "server/discover" || message.params?._meta?.[KEY_PROTOCOL] !== undefined) {
       clientIsModern = true;
@@ -309,6 +410,7 @@ process.stdin.on("data", (chunk) => {
 });
 
 function shutdown(code = 0) {
+  shuttingDown = true;
   try {
     upstream.kill();
   } catch {

@@ -55,10 +55,20 @@ function compareVersions(a, b) {
   return 0;
 }
 
-/** Newest installed version directory of `name`, or undefined. */
-function newestVersion(root, name) {
-  const versions = versionsOf(root, name);
-  return versions.length > 0 ? join(root, name, versions[versions.length - 1]) : undefined;
+/**
+ * Every installed version directory of `name`, newest first.
+ *
+ * Newest first, not newest only: a ZCode update that leaves a half-written
+ * version directory behind is a real failure mode (an interrupted download, an
+ * antivirus quarantine, a disk that filled up). Taking only the newest turns
+ * that into "Computer Use unavailable" with a path that looks correct, while
+ * the previous version sitting right beside it would have worked. Callers probe
+ * each candidate and take the first one that is actually complete.
+ */
+function versionsNewestFirst(root, name) {
+  return versionsOf(root, name)
+    .reverse()
+    .map((version) => join(root, name, version));
 }
 
 /**
@@ -70,10 +80,10 @@ export function resolveUpstreamServer() {
   const explicit = process.env.ZCODE_BRIDGE_SERVER?.trim();
   if (explicit) return explicit;
   for (const root of pluginCacheRoots()) {
-    const dir = newestVersion(root, "node-repl-host");
-    if (!dir) continue;
-    const entry = join(dir, "dist", "mcp", "server.js");
-    if (existsSync(entry)) return entry;
+    for (const dir of versionsNewestFirst(root, "node-repl-host")) {
+      const entry = join(dir, "dist", "mcp", "server.js");
+      if (existsSync(entry)) return entry;
+    }
   }
   return undefined;
 }
@@ -88,9 +98,9 @@ export function resolveCuaPluginRoot() {
   const explicit = process.env.ZCODE_CUA_PLUGIN_ROOT?.trim();
   if (explicit) return explicit;
   for (const root of pluginCacheRoots()) {
-    const dir = newestVersion(root, "computer-use");
-    if (!dir) continue;
-    if (existsSync(join(dir, "scripts", "computer-use-client.mjs"))) return dir;
+    for (const dir of versionsNewestFirst(root, "computer-use")) {
+      if (existsSync(join(dir, "scripts", "computer-use-client.mjs"))) return dir;
+    }
   }
   return undefined;
 }

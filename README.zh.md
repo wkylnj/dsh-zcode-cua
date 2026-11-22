@@ -116,9 +116,10 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 ## 限制
 
 - **Windows 专用。** 依赖 ZCode 安装目录里的 `resources/tools/cua-helper`（`ax_native.node` 原生模块）。ZCode 在 Windows 上暂时关闭了对端签名校验（`windows-helper.js` 的 `WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN = true`），**这不是本插件打开的门**；ZCode 一旦把这道门关上，本插件也随之失效。
-- **没有屏幕上的操作提示。** ZCode 桌面端的幽灵光标由 helper 的常驻渲染调度器绘制，而这条链路上只有短命的调用进程，浮层画不出来。画中画小窗（PiP）同理不可用——`ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false。
+- **没有屏幕上的操作提示。** ZCode 的幽灵光标只在 helper 处于「请求作用域」内才绘制：`windows-helper.js` 在每个原生动作前后分别调 `ghostSetRequestSession(session)` 和 `ghostSetRequestSession(null)`，而 **null 会话会主动抑制浮层**。这个作用域来自 `params.pip_session_context`，上游只在它的 MCP tool handler 里填——填的值来自一个 `AsyncLocalStorage` 存储；而 Computer Use 的动作走的是 cua-broker socket，根本不经过那个存储，所以这条路径上该字段永远缺席。桌面端能显示徽标，是因为它跑的是另一份实现、那份会传。要在这里补上，就得在 helper 的命名管道前面再加一跳代理；那是拿一个真实的额外故障点去换一个纯装饰的效果，所以没做。画中画小窗（PiP）不可用是另一回事：`ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false。
 - **Browser Use 不可用。** 上游 `node-repl-host` 实现了 Browser Use 桥，但它需要宿主提供 `browserBroker`，本插件只接了 Computer Use 桥。要浏览器操作请用 DSH 自己的 Browser Use。
 - **每个 `js` 调用都是新内核。** 变量不跨调用存活，所以每次都要重新 bootstrap。
+- **不要用两个会话同时操作桌面。** 每个 DSH 会话会各自启动一个 helper 进程，而 helper 的输入串行化（`windowsInputDispatchLease`）是**进程内**的队列，不是全机互斥。两个会话同时点击时，鼠标键盘事件会交错——一个会话的点击可能落进另一个会话刚提到前台的那个窗口里。桌面操作请集中在单个会话里做；其它会话在另一个 DSH 窗口里跑别的事、不要用 Computer Use，或者等第一个会话做完。
 - **模型能在你的桌面上真实点击和打字。** 这是能力本身，不是缺陷；不需要时把这条插件行停用即可。
 
 ## 安全说明

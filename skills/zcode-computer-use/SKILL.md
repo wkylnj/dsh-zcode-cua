@@ -280,6 +280,10 @@ stop_computer_control({reason?})
 - 除用户明确要求外，不要用 AppleScript、`osascript`、JXA、System Events、shell 命令或
   其它 UI 自动化技术。
 - **仅限主 agent**，绝不要把 Computer Use 委派给子 agent。
+- **同一时刻只让一个会话操作桌面。** 每个 DSH 会话会各自启动一个 helper 进程，而 helper
+  的输入串行化是**进程内**队列、不是全机互斥。两个会话同时点击时鼠标键盘事件会交错，
+  一次点击可能落进另一个会话刚提到前台的窗口里。如果你判断到另一个会话可能正在操作桌面，
+  先向用户确认，不要两边同时动手。
 
 ## 运行环境
 
