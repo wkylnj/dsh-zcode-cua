@@ -33,6 +33,18 @@ await app.getScreenshot();
 
 The full API reference is `agent.documentation.get("computer-use")`, fetched on demand.
 
+## The on-screen indicator
+
+While a `js` call is running, a click-through overlay tells the user the computer is being driven: a blue glow around every screen edge, a banner reading *AI is controlling this computer*, and a soft ring around the pointer.
+
+The point is that it is **invisible to the model**. Every window is marked `WDA_EXCLUDEFROMCAPTURE`, so Windows omits it from any screenshot — `PrintScreen`, `Graphics.CopyFromScreen`, and the GDI/DWM path the CUA helper itself uses. Verified on this machine: a full-screen capture taken mid-tool-call contains no trace of the overlay, while the same capture with the affinity cleared shows the full artwork.
+
+Nothing about it takes input or focus: the windows are `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, so clicks pass straight through, focus is never stolen, and it never appears in the taskbar or Alt-Tab.
+
+Turn it off with `DSH_ZCODE_CUA_NO_OVERLAY=1`. The indicator is decoration — if PowerShell is missing, the C# fails to compile, or the host process dies, every path degrades to "no indicator" and tool calls keep working unchanged.
+
+The visual design is ported from [windows-mcp](https://github.com/CursorTouch/Windows-MCP)'s `control_overlay`; the implementation is a standalone Win32 layered window in C#, compiled at runtime by Windows PowerShell 5.1 so the plugin ships no binaries and needs no build step.
+
 ## How it is wired
 
 ```
@@ -110,16 +122,17 @@ When layout resolution fails — ZCode installed somewhere unusual — override 
 | `ZCODE_BRIDGE_SERVER` | `node-repl-host`'s `dist/mcp/server.js` |
 | `ZCODE_CUA_PLUGIN_ROOT` | the `computer-use` plugin root (holds `scripts/computer-use-client.mjs`) |
 | `ZCODE_BRIDGE_HELPER_ROOT` | the `cua-helper` directory (holds `build/Release/ax_native.node`) |
+| `DSH_ZCODE_CUA_NO_OVERLAY` | set to `1` to disable the on-screen indicator entirely |
 
 Usually none are needed: the plugin looks for ZCode in the **uninstall registry** (`InstallLocation`), in `ZCODE_HOME`, and in the conventional install locations.
 
 ## Limitations
 
 - **Windows only.** It needs `resources/tools/cua-helper` from ZCode's install directory (the `ax_native.node` native module). ZCode currently has peer-identity verification disabled on Windows (`WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN = true` in `windows-helper.js`) — **this plugin did not open that gate**; the day ZCode closes it, this plugin stops working.
-- **No on-screen activity indicator.** ZCode's ghost cursor only paints while the helper is inside a *request scope*: `windows-helper.js` calls `ghostSetRequestSession(session)` around each native action and `ghostSetRequestSession(null)` afterwards, and a null session actively suppresses the overlay. The scope comes from `params.pip_session_context`, which the upstream fills in from an `AsyncLocalStorage` store populated **only** by its MCP tool handler — Computer Use actions take the cua-broker socket instead and never touch that store, so the field is always absent on this path. The desktop app shows the badge because it runs a second implementation that does supply it. Wiring the context here would need a proxy hop in front of the helper's named pipe; that is a cosmetic gain against a real extra failure mode, so it is not done. Picture-in-picture is unavailable for an unrelated reason: `ax_native.node` exports no `pip*` functions at all and `pipSessionEnabled` is always false on Windows.
+- **No ghost cursor or picture-in-picture.** ZCode's ghost cursor only paints while the helper is inside a *request scope*: `windows-helper.js` calls `ghostSetRequestSession(session)` around each native action and `ghostSetRequestSession(null)` afterwards, and a null session actively suppresses the overlay. The scope comes from `params.pip_session_context`, which the upstream fills in from an `AsyncLocalStorage` store populated **only** by its MCP tool handler — Computer Use actions take the cua-broker socket instead and never touch that store, so the field is always absent on this path. The desktop app shows the badge because it runs a second implementation that does supply it. Picture-in-picture is unavailable for an unrelated reason: `ax_native.node` exports no `pip*` functions at all and `pipSessionEnabled` is always false on Windows. The banner and screen glow described above replace both, and unlike them it is guaranteed absent from screenshots.
 - **No Browser Use.** Upstream `node-repl-host` implements a Browser Use bridge, but it needs a `browserBroker` from the host and this plugin only wires the Computer Use bridge. Use DSH's own Browser Use for web pages.
 - **Every `js` call is a fresh kernel.** Variables do not survive between calls, so bootstrap every time.
-- **Do not drive the desktop from two sessions at once.** Each DSH session starts its own helper process, and the helper's input serialisation (`windowsInputDispatchLease`) is a per-process queue, not a machine-wide one. Two sessions clicking at the same time therefore interleave their mouse and keyboard events: one session's click can land in the window the other just raised. Keep desktop work in a single session; run other sessions in a different DSH window without Computer Use, or wait for the first one to finish.
+- **Do not drive the desktop from two sessions at once.** There is only one helper in the whole chain: `@deepseek-ai/dsh-mcp-client` is a profile-level plugin, so DSH runs a single instance and a single child process. What actually keeps two sessions apart is the upstream serialisation lock — the bridge passes the same process-wide `session_id` (`dsh-<uuid>`, generated once at startup) for every DSH session, and upstream `server.js` wraps each `js` execution in `serialized(sessionKey, ...)` keyed on that id, so calls from different sessions queue behind one another. Two sessions therefore cannot click at the same time, but a long call in one session blocks every other session's `js` calls until it returns. Keep desktop work in a single session; run other sessions in a different DSH window without Computer Use, or wait for the first one to finish.
 - **The model really clicks and types on your desktop.** That is the capability, not a defect; disable the plugin row when you do not need it.
 
 ## Security notes
@@ -133,6 +146,10 @@ Usually none are needed: the plugin looks for ZCode in the **uninstall registry*
 ```
 server/paths.js     resolves ZCode's three install locations
 server/index.js     the MCP stdio server; spawns upstream and translates the protocol
+server/overlay.js   owns the indicator's host process and brackets tool calls with it
+server/overlay/     Overlay.cs (the Win32 layered window) and host.ps1 (its resident driver)
+test/smoke.mjs      end-to-end: handshake, tools/list, one real js call, cancellation
+test/overlay.mjs    end-to-end: the indicator appears during a call and leaves afterwards
 skills/             the skill (installed manually into a DSH skill directory)
 locale/             plugin display metadata
 docs/               detail page image
@@ -140,6 +157,11 @@ cordis.patch.yml    the registration row
 ```
 
 No build step, no runtime dependencies, pure ESM. Restart DSH after a change.
+
+```sh
+node test/smoke.mjs      # 5 checks
+node test/overlay.mjs    # 7 checks
+```
 
 ## License
 

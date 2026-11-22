@@ -1,7 +1,7 @@
 {
   "name": "dsh-zcode-cua",
   "displayName": "DSH ZCode Computer Control",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "把 ZCode 的电脑控制（Computer Use）接进 DeepSeek Harness：点击、打字、读无障碍树与截图。",
   "keywords": [
     "dsh-plugin",

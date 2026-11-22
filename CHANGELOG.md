@@ -2,6 +2,32 @@
 
 本文件记录本仓库的重要变更。
 
+## 1.2.0 — 2026-11-22
+
+新增屏幕上的操作提示浮层：`js` 调用执行期间，用户能看到 AI 正在操作这台电脑，而模型截的图里看不到它。
+
+### 新增
+
+- **提示浮层。** 四边蓝色光晕 + 顶部居中横幅「AI is controlling this computer」+ 光标周围柔光。视觉规格移植自 [windows-mcp](https://github.com/CursorTouch/Windows-MCP) 的 `control_overlay`，实现是完全独立的 C# Win32 分层窗口（`server/overlay/Overlay.cs`），由 Windows 自带的 PowerShell 5.1 在运行时用 `Add-Type` 编译，所以插件仍然不带二进制、不需要构建步骤。
+- **截图排除。** 每个窗口都标 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`，Windows 会把它从任何截图路径中排除。本机实测：调用进行中抓全屏，画面里找不到浮层；把 affinity 关掉再抓同一张，完整图案都在。
+- **不吃输入。** 窗口样式 `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`，点击穿透、不抢焦点、不进任务栏与 Alt-Tab。
+- **`server/overlay.js`**：浮层的宿主管理器。常驻一个 `host.ps1` 进程（编译 C# 与建窗口要几百毫秒，只付一次），把工具调用包成「进入 / 离开」，并用嵌套计数保证两个重叠的调用不会互相把浮层关掉。
+- **`test/overlay.mjs`**：端到端验证三件事——空闲时无窗口、`js` 调用期间六个窗口全部可见、调用结束后全部消失。7 项检查。
+- 环境变量 `DSH_ZCODE_CUA_NO_OVERLAY=1` 可完全关掉浮层。
+
+### 设计取舍
+
+- **失败一律降级，绝不阻断调用。** 浮层是装饰：PowerShell 缺失、C# 编译失败、宿主进程挂掉，全部退化成「没有提示」并照常调用。一个因为状态徽标坏掉就不能用的电脑控制插件是坏交易。宿主在启动后一秒内死亡会被标记为不可用而不再重试，避免每次调用都去撞同一个编译错误。
+- **只对 `js` 这个工具亮。** 上游只有这一个工具，Computer Use 的每个动作都在它里面；写成「任何工具调用都亮」会让以后新增的非桌面工具也顶着「正在操作电脑」的横幅。
+- **DPI 感知必须在建窗口之前设。** 否则进程是 DPI-unaware，`GetSystemMetrics` 报的是虚拟化后的小尺寸、合成器又把窗口放大，横幅会偏到右半边、被屏幕边缘截断（实测踩到）。
+- **`RegisterClassEx` / `CreateWindowEx` 两侧都要 `CharSet.Unicode`。** 缺了会以 ANSI 名字注册、再以 UTF-16 查找，每次创建都返回 1411 `ERROR_CLASS_DOES_NOT_EXIST`，而 `RegisterClassEx` 明明成功（实测踩到）。
+- **C# 里的类必须是 `public`。** `Add-Type` 发到动态程序集，只能访问导出类型；`internal` 编译得过，然后 PowerShell 报「找不到类型」（实测踩到）。
+
+### 变更
+
+- 限制一节里「没有屏幕上的操作提示」改为「没有幽灵光标，也没有画中画」，并说明新浮层替代了这两者、且保证不进截图。幽灵光标那段的成因分析保留。
+- 开发一节补充 `server/overlay.js`、`server/overlay/`、`test/overlay.mjs` 与两条测试命令。
+
 ## 1.1.0 — 2026-11-22
 
 稳定性加固。没有新增能力，改的全是「出问题时会发生什么」。
@@ -22,6 +48,10 @@
 
 - 限制一节新增「不要用两个会话同时操作桌面」：每个 DSH 会话各自启动一个 helper，而 helper 的输入串行化（`windowsInputDispatchLease`）是进程内队列、不是全机互斥，两个会话同时点击会让鼠标键盘事件交错。
 - 更正幽灵光标那段的原因说明。原来写「只有短命进程，浮层画不出来」是错的；真正原因是上游在 cua-broker 路径上从不填 `pip_session_context`，helper 收到 null 会话后主动抑制浮层。同时说明为什么不在本插件里绕开它。
+
+### 更正
+
+- 上面「文档」第一条把并发限制的原因写错了。原文说「每个 DSH 会话各自启动一个 helper、`windowsInputDispatchLease` 是进程内队列」，这不是实情：`@deepseek-ai/dsh-mcp-client` 是 profile 级插件，整个 DSH 只有一份 helper、一个子进程。真正的原因是桥接层给所有 DSH 会话传同一个进程级 `session_id`（`dsh-<uuid>`），上游 `server.js` 用 `serialized(sessionKey, ...)` 据此把它们排成一队——两个会话因此不会同时操作桌面，代价是一个会话的长调用会阻塞其它会话的 `js` 调用。结论不变；README 与 `skills/zcode-computer-use/SKILL.md` 的表述已同步更正。
 
 ## 1.0.0 — 2026-11-22
 

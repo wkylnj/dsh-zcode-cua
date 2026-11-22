@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { resolveRuntime, describeRuntime, runtimeIsComplete } from "./paths.js";
+import { createOverlay } from "./overlay.js";
 
 const KEY_PROTOCOL = "io.modelcontextprotocol/protocolVersion";
 const KEY_CAPS = "io.modelcontextprotocol/clientCapabilities";
@@ -48,6 +49,18 @@ const REQUEST_TIMEOUT_MS = 240_000;
 
 /** Set once a shutdown has begun, so an upstream exit is not read as a crash. */
 let shuttingDown = false;
+
+/**
+ * The "AI is driving this computer" indicator.
+ *
+ * Off with `DSH_ZCODE_CUA_NO_OVERLAY=1`. On by default because the point of the
+ * feature is that the user should never be surprised by a moving pointer; a
+ * silent default-off would only help people who already know the plugin does
+ * this. Failure is always non-fatal — see `server/overlay.js`.
+ */
+const overlay = createOverlay({
+  enabled: process.env.DSH_ZCODE_CUA_NO_OVERLAY !== "1",
+});
 
 const runtime = resolveRuntime();
 
@@ -284,7 +297,17 @@ let legacyHandshakeSeen = false;
 
 async function forwardModern(message) {
   const { id, method, params } = message;
-  const forwarded = method === "tools/call" ? withRequestContext(method, params) : { ...(params ?? {}), _meta: envelope(params?._meta) };
+  if (method === "tools/call") {
+    await forwardToolCall(method, params, (result) => {
+      if (result instanceof Error) {
+        write({ jsonrpc: "2.0", id, error: result.rpcError ?? { code: -32603, message: String(result?.message ?? result) } });
+        return;
+      }
+      write({ jsonrpc: "2.0", id, result });
+    });
+    return;
+  }
+  const forwarded = { ...(params ?? {}), _meta: envelope(params?._meta) };
   try {
     write({ jsonrpc: "2.0", id, result: await upstreamRequest(method, forwarded) });
   } catch (error) {
@@ -310,6 +333,30 @@ async function forwardNotification(message) {
     process.stderr.write(
       `[dsh-zcode-cua] could not forward ${method}: ${error instanceof Error ? error.message : String(error)}\n`,
     );
+  }
+}
+
+/**
+ * Forward one tools/call with the indicator raised for its duration.
+ *
+ * The indicator brackets the WHOLE call rather than each broker request: a `js`
+ * cell is one user-visible action even when it performs a dozen clicks, and
+ * flickering the border between them would read as a malfunction. `finally`
+ * covers all three endings — success, upstream error, and cancellation — because
+ * a stranded indicator would claim the AI is still driving after the user
+ * stopped it.
+ */
+async function forwardToolCall(method, params, respond) {
+  const name = typeof params?.name === "string" ? params.name : "";
+  const tracked = overlay.handlesTool(name);
+  if (tracked) overlay.enter();
+  try {
+    const forwarded = withRequestContext(method, params);
+    respond(await upstreamRequest(method, forwarded));
+  } catch (error) {
+    respond(error);
+  } finally {
+    if (tracked) overlay.leave();
   }
 }
 
@@ -345,12 +392,13 @@ async function handleLegacy(message) {
   }
 
   if (method === "tools/call") {
-    try {
-      const forwarded = withRequestContext(method, params);
-      write({ jsonrpc: "2.0", id, result: toLegacyResult(await upstreamRequest("tools/call", forwarded)) });
-    } catch (error) {
-      write({ jsonrpc: "2.0", id, error: error.rpcError ?? { code: -32603, message: String(error?.message ?? error) } });
-    }
+    await forwardToolCall(method, params, (result) => {
+      if (result instanceof Error) {
+        write({ jsonrpc: "2.0", id, error: result.rpcError ?? { code: -32603, message: String(result?.message ?? result) } });
+        return;
+      }
+      write({ jsonrpc: "2.0", id, result: toLegacyResult(result) });
+    });
     return;
   }
 
@@ -411,6 +459,7 @@ process.stdin.on("data", (chunk) => {
 
 function shutdown(code = 0) {
   shuttingDown = true;
+  overlay.dispose();
   try {
     upstream.kill();
   } catch {

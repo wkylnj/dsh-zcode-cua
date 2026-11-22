@@ -33,6 +33,18 @@ await app.getScreenshot();
 
 完整 API 参考在 `agent.documentation.get("computer-use")`，按需取。
 
+## 屏幕上的提示浮层
+
+`js` 调用执行期间，屏幕上会出现一层可穿透的提示：四边蓝色光晕、顶部居中横幅「AI is controlling this computer」，以及光标周围一圈柔光。
+
+关键在于它**对模型不可见**。每个窗口都标了 `WDA_EXCLUDEFROMCAPTURE`，Windows 会把它从任何截图中排除——`PrintScreen`、`Graphics.CopyFromScreen`，以及 CUA helper 自己走的 GDI/DWM 路径都算在内。本机实测：在调用进行中抓全屏，画面里找不到浮层的任何痕迹；把 affinity 关掉再抓同一张，完整图案就都在。
+
+它也不吃输入、不抢焦点：窗口样式是 `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，点击直接穿透，不会出现在任务栏或 Alt-Tab 里。
+
+要关掉它，设 `DSH_ZCODE_CUA_NO_OVERLAY=1`。这层提示纯属装饰——PowerShell 缺失、C# 编译失败、宿主进程挂掉，任何一条路径都退化成「没有提示」并继续正常调用，不会拖累工具本身。
+
+视觉设计移植自 [windows-mcp](https://github.com/CursorTouch/Windows-MCP) 的 `control_overlay`；实现是一个独立的 C# Win32 分层窗口，由 Windows 自带的 PowerShell 5.1 在运行时编译，所以插件不带任何二进制、也不需要构建步骤。
+
 ## 它是怎么接的
 
 ```
@@ -110,16 +122,17 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 | `ZCODE_BRIDGE_SERVER` | `node-repl-host` 的 `dist/mcp/server.js` |
 | `ZCODE_CUA_PLUGIN_ROOT` | `computer-use` 插件根目录（含 `scripts/computer-use-client.mjs`） |
 | `ZCODE_BRIDGE_HELPER_ROOT` | `cua-helper` 目录（含 `build/Release/ax_native.node`） |
+| `DSH_ZCODE_CUA_NO_OVERLAY` | 设为 `1` 即完全关闭屏幕提示浮层 |
 
 平时不需要设——插件会从**卸载注册表**（`InstallLocation`）、`ZCODE_HOME`、以及常见安装位置三处去找 ZCode。
 
 ## 限制
 
 - **Windows 专用。** 依赖 ZCode 安装目录里的 `resources/tools/cua-helper`（`ax_native.node` 原生模块）。ZCode 在 Windows 上暂时关闭了对端签名校验（`windows-helper.js` 的 `WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN = true`），**这不是本插件打开的门**；ZCode 一旦把这道门关上，本插件也随之失效。
-- **没有屏幕上的操作提示。** ZCode 的幽灵光标只在 helper 处于「请求作用域」内才绘制：`windows-helper.js` 在每个原生动作前后分别调 `ghostSetRequestSession(session)` 和 `ghostSetRequestSession(null)`，而 **null 会话会主动抑制浮层**。这个作用域来自 `params.pip_session_context`，上游只在它的 MCP tool handler 里填——填的值来自一个 `AsyncLocalStorage` 存储；而 Computer Use 的动作走的是 cua-broker socket，根本不经过那个存储，所以这条路径上该字段永远缺席。桌面端能显示徽标，是因为它跑的是另一份实现、那份会传。要在这里补上，就得在 helper 的命名管道前面再加一跳代理；那是拿一个真实的额外故障点去换一个纯装饰的效果，所以没做。画中画小窗（PiP）不可用是另一回事：`ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false。
+- **没有幽灵光标，也没有画中画。** ZCode 的幽灵光标只在 helper 处于「请求作用域」内才绘制：`windows-helper.js` 在每个原生动作前后分别调 `ghostSetRequestSession(session)` 和 `ghostSetRequestSession(null)`，而 **null 会话会主动抑制浮层**。这个作用域来自 `params.pip_session_context`，上游只在它的 MCP tool handler 里填——填的值来自一个 `AsyncLocalStorage` 存储；而 Computer Use 的动作走的是 cua-broker socket，根本不经过那个存储，所以这条路径上该字段永远缺席。桌面端能显示徽标，是因为它跑的是另一份实现、那份会传。画中画小窗（PiP）不可用是另一回事：`ax_native.node` 没有导出任何 `pip*` 函数，helper 在 Windows 上的 `pipSessionEnabled` 恒为 false。上面说的横幅与四边光晕替代了这两者，而且它们保证不会出现在截图里。
 - **Browser Use 不可用。** 上游 `node-repl-host` 实现了 Browser Use 桥，但它需要宿主提供 `browserBroker`，本插件只接了 Computer Use 桥。要浏览器操作请用 DSH 自己的 Browser Use。
 - **每个 `js` 调用都是新内核。** 变量不跨调用存活，所以每次都要重新 bootstrap。
-- **不要用两个会话同时操作桌面。** 每个 DSH 会话会各自启动一个 helper 进程，而 helper 的输入串行化（`windowsInputDispatchLease`）是**进程内**的队列，不是全机互斥。两个会话同时点击时，鼠标键盘事件会交错——一个会话的点击可能落进另一个会话刚提到前台的那个窗口里。桌面操作请集中在单个会话里做；其它会话在另一个 DSH 窗口里跑别的事、不要用 Computer Use，或者等第一个会话做完。
+- **不要用两个会话同时操作桌面。** 整条链路上只有一份 helper：`@deepseek-ai/dsh-mcp-client` 是 **profile 级**插件，DSH 只起一个实例、一个子进程。真正把两个会话隔开的是上游的串行锁——桥接层给所有 DSH 会话传的是同一个进程级 `session_id`（`dsh-<uuid>`，进程启动时生成一次），上游 `server.js` 用 `serialized(sessionKey, ...)` 把每次 `js` 执行按这个 id 排队，所以不同会话的调用只能一个接一个地跑。好处是两个会话不会同时操作桌面，代价是一个会话的长调用会把其它会话的 `js` 调用全堵在后面，直到它返回。桌面操作请集中在单个会话里做；其它会话在另一个 DSH 窗口里跑别的事、不要用 Computer Use，或者等第一个会话做完。
 - **模型能在你的桌面上真实点击和打字。** 这是能力本身，不是缺陷；不需要时把这条插件行停用即可。
 
 ## 安全说明
@@ -133,6 +146,10 @@ DSH **不会**从插件目录自动加载技能——它只扫描 `<项目>/.dsh
 ```
 server/paths.js     解析 ZCode 三处安装位置
 server/index.js     MCP stdio 服务端；spawn 上游并翻译协议
+server/overlay.js   管理提示浮层的宿主进程，并用它包住每次工具调用
+server/overlay/     Overlay.cs（Win32 分层窗口）与 host.ps1（常驻驱动）
+test/smoke.mjs      端到端：握手、tools/list、一次真实 js 调用、取消通知
+test/overlay.mjs    端到端：调用期间浮层出现，结束后消失
 skills/             技能（手动安装到 DSH 技能目录）
 locale/             插件展示元数据
 docs/               详情页图片
@@ -140,6 +157,11 @@ cordis.patch.yml    注册行
 ```
 
 没有构建步骤，没有运行时依赖，纯 ESM。改完重启 DSH 生效。
+
+```sh
+node test/smoke.mjs      # 5 项检查
+node test/overlay.mjs    # 7 项检查
+```
 
 ## 许可
 
