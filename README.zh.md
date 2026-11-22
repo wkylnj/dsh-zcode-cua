@@ -35,7 +35,7 @@ await app.getScreenshot();
 
 ## 屏幕上的提示浮层
 
-`js` 调用执行期间，屏幕上会出现一层可穿透的提示：四边蓝色光晕、顶部居中横幅「AI is controlling this computer」，以及光标周围一圈柔光。
+`js` 调用执行期间，屏幕上会出现一层可穿透的提示：四边蓝色光晕、顶部居中横幅，以及光标周围一圈柔光。横幅第一行固定是「DSH 正在控制电脑」，第二行是**这次调用正在做的事**——取自 `js` 工具必填的 `title` 参数，模型本来就要用它写一句面向用户的说明。
 
 关键在于它**对模型不可见**。每个窗口都标了 `WDA_EXCLUDEFROMCAPTURE`，Windows 会把它从任何截图中排除——`PrintScreen`、`Graphics.CopyFromScreen`，以及 CUA helper 自己走的 GDI/DWM 路径都算在内。本机实测：在调用进行中抓全屏，画面里找不到浮层的任何痕迹；把 affinity 关掉再抓同一张，完整图案就都在。
 

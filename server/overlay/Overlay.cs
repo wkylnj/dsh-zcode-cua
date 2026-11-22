@@ -255,12 +255,13 @@ namespace DshZcodeCua
         static Native.WndProcDelegate procKeepAlive;
         static bool visible;
         static string phase = "working";
+        static string detail = "";
 
         // Visual constants, matching windows-mcp's control_overlay_art.
         const int BORDER = 56;
         const int CURSOR_SIZE = 88;
         const int CURSOR_LABEL_SIZE = 20;
-        const string CURSOR_LABEL = "AI";
+        const string CURSOR_LABEL = "DSH";
 
         static Color PhaseColor()
         {
@@ -273,8 +274,19 @@ namespace DshZcodeCua
         static string PhaseTitle()
         {
             return phase == "waiting"
-                ? "AI needs you to decide something"
-                : "AI is controlling this computer";
+                ? "DSH 需要你来决定"
+                : "DSH 正在控制电脑";
+        }
+
+        /// <summary>
+        /// The action to show under the title: whatever the current tool call said
+        /// it was doing. Empty means the caller gave no description, in which case
+        /// the banner keeps a generic line rather than showing a blank row.
+        /// </summary>
+        static string PhaseDetail()
+        {
+            string text = detail == null ? "" : detail.Trim();
+            return text.Length > 0 ? text : "正在执行操作…";
         }
 
         static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -530,7 +542,7 @@ namespace DshZcodeCua
             if (available < 240) return null;
 
             string title = PhaseTitle();
-            string hint = "Move the mouse a long distance to take over";
+            string hint = PhaseDetail();
 
             Font titleFont = null, hintFont = null;
             SizeF titleSize = SizeF.Empty, hintSize = SizeF.Empty;
@@ -625,11 +637,12 @@ namespace DshZcodeCua
         /// it false the windows are capturable, which is how a test proves the
         /// overlay really paints instead of being an invisible-but-present window.
         /// </summary>
-        public static string Show(string newPhase, bool excludeFromCapture = true)
+        public static string Show(string newPhase, bool excludeFromCapture = true, string newDetail = null)
         {
             lock (Gate)
             {
                 if (!string.IsNullOrEmpty(newPhase)) phase = newPhase;
+                if (newDetail != null) detail = newDetail;
                 HideInternal();
                 try
                 {

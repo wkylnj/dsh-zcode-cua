@@ -8,7 +8,7 @@
 
 ### 新增
 
-- **提示浮层。** 四边蓝色光晕 + 顶部居中横幅「AI is controlling this computer」+ 光标周围柔光。视觉规格移植自 [windows-mcp](https://github.com/CursorTouch/Windows-MCP) 的 `control_overlay`，实现是完全独立的 C# Win32 分层窗口（`server/overlay/Overlay.cs`），由 Windows 自带的 PowerShell 5.1 在运行时用 `Add-Type` 编译，所以插件仍然不带二进制、不需要构建步骤。
+- **提示浮层。** 四边蓝色光晕 + 顶部居中横幅 + 光标周围柔光。横幅第一行固定「DSH 正在控制电脑」，第二行显示**本次调用正在做的事**（取 `js` 工具必填的 `title` 参数）；没给 title 时回落成「正在执行操作…」。视觉规格移植自 [windows-mcp](https://github.com/CursorTouch/Windows-MCP) 的 `control_overlay`，实现是完全独立的 C# Win32 分层窗口（`server/overlay/Overlay.cs`），由 Windows 自带的 PowerShell 5.1 在运行时用 `Add-Type` 编译，所以插件仍然不带二进制、不需要构建步骤。
 - **截图排除。** 每个窗口都标 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`，Windows 会把它从任何截图路径中排除。本机实测：调用进行中抓全屏，画面里找不到浮层；把 affinity 关掉再抓同一张，完整图案都在。
 - **不吃输入。** 窗口样式 `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`，点击穿透、不抢焦点、不进任务栏与 Alt-Tab。
 - **`server/overlay.js`**：浮层的宿主管理器。常驻一个 `host.ps1` 进程（编译 C# 与建窗口要几百毫秒，只付一次），把工具调用包成「进入 / 离开」，并用嵌套计数保证两个重叠的调用不会互相把浮层关掉。

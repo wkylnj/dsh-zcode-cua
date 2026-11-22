@@ -6,10 +6,13 @@
 # screenshot. So this process is spawned once and kept alive, reading stdin.
 #
 # Protocol (one JSON object per line on stdin, one line per reply on stdout):
-#   {"cmd":"show","phase":"working"|"waiting"}  -> {"ok":true,"detail":"ok:6"}
+#   {"cmd":"show","phase":"working"|"waiting","text":"..."}  -> {"ok":true,"detail":"ok:6"}
 #   {"cmd":"hide"}                              -> {"ok":true}
 #   {"cmd":"diagnose"}                          -> {"ok":true,"detail":"visible:..."}
 #   {"cmd":"quit"}                              -> exits
+#
+# `text` is the action line under the title — whatever the current tool call
+# said it was doing. It is optional; without it the banner shows a generic line.
 #
 # Compilation is done in-process with Add-Type. Nothing is written to disk, so
 # the plugin ships no binaries and needs no build step. If compilation fails the
@@ -94,7 +97,8 @@ while ($true) {
     switch ($cmd.cmd) {
         'show' {
             $phase = if ($cmd.phase) { [string]$cmd.phase } else { 'working' }
-            $detail = [DshZcodeCua.Overlay]::Show($phase)
+            $text = if ($null -ne $cmd.text) { [string]$cmd.text } else { $null }
+            $detail = [DshZcodeCua.Overlay]::Show($phase, $true, $text)
             Reply ($detail -notlike 'error:*') $detail
         }
         'hide' {

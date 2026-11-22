@@ -264,9 +264,11 @@ export function createOverlay(options = {}) {
   let depth = 0;
   let shown = false;
 
-  const show = (phase) => {
+  const show = (phase, text) => {
     if (!enabled) return;
-    void host.command("show", { phase }).then((reply) => {
+    const extra = { phase };
+    if (typeof text === "string" && text.trim() !== "") extra.text = text.trim();
+    void host.command("show", extra).then((reply) => {
       if (!reply.ok) log(`overlay: show failed — ${reply.detail}`);
     });
   };
@@ -283,13 +285,19 @@ export function createOverlay(options = {}) {
       return enabled && CUA_TOOL_NAMES.has(name);
     },
 
-    /** A tool call started. */
-    enter() {
+    /**
+     * A tool call started.
+     *
+     * `text` is what the call said it was doing — the `js` tool's required
+     * `title` argument — and becomes the banner's second line. Empty is fine:
+     * the banner then keeps a generic line instead of showing a blank row.
+     */
+    enter(text) {
       if (!enabled) return;
       depth += 1;
       if (depth === 1 && !shown) {
         shown = true;
-        show("working");
+        show("working", text);
       }
     },
 

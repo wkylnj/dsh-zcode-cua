@@ -35,7 +35,7 @@ The full API reference is `agent.documentation.get("computer-use")`, fetched on 
 
 ## The on-screen indicator
 
-While a `js` call is running, a click-through overlay tells the user the computer is being driven: a blue glow around every screen edge, a banner reading *AI is controlling this computer*, and a soft ring around the pointer.
+While a `js` call is running, a click-through overlay tells the user the computer is being driven: a blue glow around every screen edge, a banner, and a soft ring around the pointer. The banner's first line is always *DSH 正在控制电脑*; the second line is **what this call is doing**, taken from the `js` tool's required `title` argument — the same sentence the model already writes for the user.
 
 The point is that it is **invisible to the model**. Every window is marked `WDA_EXCLUDEFROMCAPTURE`, so Windows omits it from any screenshot — `PrintScreen`, `Graphics.CopyFromScreen`, and the GDI/DWM path the CUA helper itself uses. Verified on this machine: a full-screen capture taken mid-tool-call contains no trace of the overlay, while the same capture with the affinity cleared shows the full artwork.
 

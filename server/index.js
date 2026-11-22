@@ -349,7 +349,11 @@ async function forwardNotification(message) {
 async function forwardToolCall(method, params, respond) {
   const name = typeof params?.name === "string" ? params.name : "";
   const tracked = overlay.handlesTool(name);
-  if (tracked) overlay.enter();
+  // The `js` tool requires a `title`, and the model writes it as a short
+  // user-facing description of what the call is about to do. That is exactly
+  // the line the banner should show, so it is passed straight through.
+  const title = typeof params?.arguments?.title === "string" ? params.arguments.title : "";
+  if (tracked) overlay.enter(title);
   try {
     const forwarded = withRequestContext(method, params);
     respond(await upstreamRequest(method, forwarded));
