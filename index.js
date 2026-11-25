@@ -25,11 +25,19 @@ const ACCESS_PATH = "/plugins/dsh-zcode-cua/access";
  *
  * `tools` must be declared here, not merely used: Cordis refuses to read
  * `ctx.tools` on an undeclared service (`cannot get property "tools" without
- * inject`), which fails the whole plugin row rather than one call. `webServer`
- * is declared at its injection site below instead, because the gate still works
- * without it — a missing webserver costs the switch, not the guard.
+ * inject`), which fails the whole plugin row rather than one call.
+ *
+ * `webServer` and `connection` are declared here rather than at the injection
+ * site below for a reason that outranks convenience: the access route WRITES
+ * the grant. Without the connection fence, any page the user has open in a
+ * browser could `POST` this route and switch computer control on for a session,
+ * which is a remote page acquiring the ability to move the mouse. A gate whose
+ * only weakness is that anyone can open it is not a gate, so a Host that cannot
+ * supply the fence does not get the route at all — the switch disappears and the
+ * guard stays. That is why these two are hard requirements instead of optional
+ * injections.
  */
-export const inject = ["tools"];
+export const inject = ["tools", "webServer", "connection"];
 
 /**
  * Answer one access request.
@@ -47,7 +55,29 @@ export const inject = ["tools"];
  * "this request forgot to name a session" and "this session is off" must not
  * look alike, or a broken switch reads as a working one.
  */
-async function handleAccess(req, res, logger) {
+async function handleAccess(req, res, logger, connection) {
+  /**
+   * The trust fence, and it must run before anything else reads the request.
+   *
+   * `connection.requestRejection(req)` answers `401`/`403` for a request that
+   * fails the Host/Origin check (DNS rebinding, a foreign page's cross-site
+   * call) or that carries no browser authentication, and `undefined` for one
+   * that may proceed. Calling it first is what stops a web page the user has
+   * open from flipping this switch: that page shares the browser but not the
+   * credential, and its Origin is not this Host.
+   *
+   * This route is a WRITE route for a capability that moves the mouse, so the
+   * fence is not optional here. If the service ever answers something other
+   * than the three documented values, the request is refused: a fence that
+   * fails open is worse than no fence, because the code reads as protected.
+   */
+  const rejection = requestRejectionOf(connection, req);
+  if (rejection !== undefined) {
+    res.statusCode = rejection;
+    res.setHeader("cache-control", "no-store");
+    res.end();
+    return;
+  }
   let url;
   try {
     url = new URL(req.url ?? "/", "http://localhost");
@@ -86,6 +116,34 @@ async function handleAccess(req, res, logger) {
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * `401`/`403` when the request fails the Host/Origin fence or carries no
+ * browser credential, `undefined` when it may proceed.
+ *
+ * The service is passed in rather than read from a module-level binding: a
+ * module-level variable would be shared by every `apply` in the process, so a
+ * second mount (a test, a reload that overlaps the previous generation) would
+ * silently fence its requests with the other instance's service.
+ *
+ * Deliberately total: a service that is missing, a method that throws, or a
+ * value outside the documented three all resolve to `403`. The alternative —
+ * letting an unexpected shape fall through as "no rejection" — would turn a
+ * broken fence into an open one, and the failure would be invisible because the
+ * code still reads as guarded.
+ */
+function requestRejectionOf(connection, req) {
+  if (connection === undefined || connection === null) return 403;
+  if (typeof connection.requestRejection !== "function") return 403;
+  let rejection;
+  try {
+    rejection = connection.requestRejection(req);
+  } catch {
+    return 403;
+  }
+  if (rejection === undefined) return undefined;
+  return rejection === 401 || rejection === 403 ? rejection : 403;
 }
 
 function writeJson(res, status, payload) {
@@ -138,6 +196,8 @@ function readJson(req, limit = 8 * 1024) {
  * authority granted to the previous generation.
  */
 export function apply(ctx, _config) {
+  const connection = Reflect.get(ctx, "connection");
+
   ctx.effect(() => {
     const removeGuard = ctx.tools.guard(guardBody);
     return () => {
@@ -146,14 +206,21 @@ export function apply(ctx, _config) {
     };
   });
 
-  ctx.inject(["webServer"], (webCtx) => {
-    const dispose = webCtx.effect(() =>
-      webCtx.webServer.register({
-        kind: "exact",
-        path: ACCESS_PATH,
-        handler: (req, res) => handleAccess(req, res, ctx.logger),
-      }),
-    );
-    return dispose;
-  });
+  // No `ctx.inject` wrapper here: `webServer` and `connection` are hard
+  // requirements declared in `inject`, so by the time `apply` runs both exist.
+  // Registering the route unconditionally is the point — a Host that could not
+  // supply the connection fence would never reach this line, rather than
+  // silently serving an unfenced write route.
+  //
+  // `connection` is captured per mount, not held in a module variable: two
+  // mounts in one process (a test, an overlapping reload) must each fence with
+  // their own service.
+  const dispose = ctx.effect(() =>
+    ctx.webServer.register({
+      kind: "exact",
+      path: ACCESS_PATH,
+      handler: (req, res) => handleAccess(req, res, ctx.logger, connection),
+    }),
+  );
+  return dispose;
 }

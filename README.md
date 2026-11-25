@@ -51,6 +51,17 @@ Three details worth knowing:
 
 The switch shows a third state — `电脑控制 · 状态未知` — when the host route cannot be reached. "Off" and "could not ask" must not look alike, or a broken switch reads as a working one.
 
+### The route is fenced by the connection service
+
+The switch's route (`/plugins/dsh-zcode-cua/access`) **writes** the grant, so an unfenced route would be worse than no switch at all: any page the user has open in a browser could `POST` it and hand itself the ability to move the mouse. The route therefore asks `ctx.connection.requestRejection(req)` first and answers `401`/`403` before reading anything else — that is DSH's own Host/Origin fence plus browser authentication, so a foreign page is refused on both the origin and the credential.
+
+Two properties of that fence are deliberate:
+
+- **It fails closed.** A missing service, a throwing service, or a return value outside the documented `401 | 403 | undefined` all resolve to `403`. A fence that falls open still *reads* as guarded, so the defect would stay invisible until someone abused it.
+- **`webServer` and `connection` are hard requirements** in the plugin's `inject` list, not optional injections. A Host that cannot supply the fence does not get the route at all — the switch disappears and the guard stays, rather than the route being served unprotected.
+
+`test/fence.mjs` pins all of it: refused requests never reach the switch, allowed ones do, and every unexpected service shape answers `403`.
+
 ## The on-screen indicator
 
 While a `js` call is running, a click-through overlay tells the user the computer is being driven: a blue glow around every screen edge, a banner, and a soft ring around the pointer. The banner's first line is always *DSH 正在控制电脑*; the second line is **what this call is doing**, taken from the `js` tool's required `title` argument — the same sentence the model already writes for the user.
@@ -175,6 +186,7 @@ server/helper-launcher.js  drops the upstream's forced --ghost-cursor-overlay, t
 test/smoke.mjs           end-to-end: handshake, tools/list, one real js call, cancellation
 test/overlay.mjs         end-to-end: the indicator appears during a call and leaves afterwards
 test/access.mjs          unit: the guard denies, allows, and scopes grants per session
+test/fence.mjs           unit: the switch's route refuses unauthenticated callers and fails closed
 skills/                  the skill (installed manually into a DSH skill directory)
 locale/                  plugin display metadata
 docs/                    detail page image
@@ -185,6 +197,7 @@ No build step, no runtime dependencies, pure ESM. Restart DSH after a change.
 
 ```sh
 node test/access.mjs     # 13 checks
+node test/fence.mjs      # 15 checks
 node test/smoke.mjs      # 5 checks
 node test/overlay.mjs    # 9 checks
 ```

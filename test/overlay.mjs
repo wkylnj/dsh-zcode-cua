@@ -72,6 +72,75 @@ function visibleOverlayWindows() {
   }
 }
 
+/**
+ * Poll in ONE PowerShell process for `durationMs`, asynchronously, and report
+ * the largest number of visible overlay windows seen at any sample.
+ *
+ * Two things are load-bearing here, and both were learned by watching this
+ * assertion fail against a correct plugin:
+ *
+ *   - It must be ASYNC (`spawn`, not `execFileSync`). A synchronous probe blocks
+ *     the event loop, so the call it is supposed to observe cannot be sent until
+ *     the poller has already finished — the sample then covers an idle period
+ *     and the assertion fails for a reason that has nothing to do with the
+ *     overlay.
+ *   - It must sample INSIDE one PowerShell process. Each fresh process pays the
+ *     `Add-Type` compile (~700 ms), which is longer than the 900 ms
+ *     minimum-visible window being measured, so one-shot sampling from outside
+ *     makes the result depend on probe speed.
+ *
+ * Resolves `undefined` when the poller itself failed, so a broken probe is never
+ * mistaken for "nothing appeared".
+ */
+function maxOverlayWindowsDuring(durationMs) {
+  // `PROBE_SCRIPT` ends with a line that PRINTS the window names, which is what
+  // the one-shot probe wants. The poller needs the count alone, so it uses the
+  // type definition without that trailing line — otherwise the names arrive on
+  // stdout ahead of the number and the parse fails.
+  const script = `${PROBE_SCRIPT.slice(0, PROBE_SCRIPT.lastIndexOf("["))}
+$deadline = [DateTime]::UtcNow.AddMilliseconds(${durationMs})
+$max = 0
+while ([DateTime]::UtcNow -lt $deadline) {
+  $n = @([OverlayProbe]::Find()).Count
+  if ($n -gt $max) { $max = $n }
+  Start-Sleep -Milliseconds 60
+}
+$max
+`;
+  return new Promise((resolve) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    let out = "";
+    let err = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      err += chunk;
+    });
+    child.on("error", (error) => {
+      if (process.env.DSH_ZCODE_CUA_DEBUG_TESTS === "1") {
+        process.stderr.write(`poller spawn failed: ${String(error)}\n`);
+      }
+      resolve(undefined);
+    });
+    child.on("close", (code) => {
+      const value = Number.parseInt(String(out).trim(), 10);
+      if (process.env.DSH_ZCODE_CUA_DEBUG_TESTS === "1" && Number.isNaN(value)) {
+        process.stderr.write(
+          `poller exit=${String(code)} stdout=${JSON.stringify(out)} stderr=${JSON.stringify(err.slice(0, 400))}\n`,
+        );
+      }
+      resolve(Number.isNaN(value) ? undefined : value);
+    });
+  });
+}
+
 const results = [];
 function check(name, ok, detail) {
   results.push({ name, ok, detail });
@@ -170,17 +239,21 @@ async function main() {
     // Regression: a call shorter than the first-use compile used to queue its
     // hide ahead of the windows, so the indicator never appeared at all. The
     // minimum-visible window is what makes a 200 ms cell still show up.
+    //
+    // Measured by a poller started BEFORE the call, so the assertion observes
+    // the whole window instead of one instant that depends on how fast a fresh
+    // PowerShell can compile the probe.
+    const poller = maxOverlayWindowsDuring(2500);
     send({
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
       params: { name: "js", arguments: { title: "short call", code: "nodeRepl.write('short')" } },
     });
-    await sleep(350);
-    const shortCall = visibleOverlayWindows();
-    check("short call: overlay still appears", shortCall !== undefined && shortCall.length >= 5,
-      shortCall === undefined ? "probe failed" : `${shortCall.length} window(s)`);
     await waitFor(4, 60_000);
+    const shortPeak = await poller;
+    check("short call: overlay still appears", shortPeak !== undefined && shortPeak >= 5,
+      shortPeak === undefined ? "probe failed" : `peak ${shortPeak} window(s)`);
     await sleep(1500);
     const shortGone = visibleOverlayWindows();
     check("short call: overlay goes away", shortGone !== undefined && shortGone.length === 0,

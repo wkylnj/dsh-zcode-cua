@@ -51,6 +51,17 @@ await app.getScreenshot();
 
 宿主路由够不着时开关会显示第三种状态 `电脑控制 · 状态未知`。「关闭」和「问不到」不能长得一样，否则一个坏掉的开关看起来跟好的一样。
 
+### 这条路由由连接服务把关
+
+开关的这条路由（`/plugins/dsh-zcode-cua/access`）**会写入授权**，所以一条不设防的路由比没有开关更糟：你浏览器里开着的任何网页都能 `POST` 它，把自己变成有权移动鼠标的一方。因此这条路由第一步就问 `ctx.connection.requestRejection(req)`，在读取任何其它内容之前先答 `401`/`403` —— 那是 DSH 自己的 Host/Origin 栅栏加浏览器身份验证，外来页面在来源和凭据两道都过不去。
+
+栅栏的两个性质是刻意的：
+
+- **失败即拒绝。** 服务缺失、服务抛错、或返回值不在文档的 `401 | 403 | undefined` 之内，一律当 `403`。一个失败后放行的栅栏**读起来**仍然像设了防，于是这个缺陷会一直隐形，直到有人利用它。
+- **`webServer` 与 `connection` 是 `inject` 里的硬要求**，不是可选注入。提供不了这道栅栏的宿主根本拿不到这条路由 —— 开关消失、守卫保留，而不是把路由无保护地挂上去。
+
+`test/fence.mjs` 钉住了全部：被拒的请求到不了开关，放行的到得了，以及每一种异常的服务形态都答 `403`。
+
 ## 屏幕上的提示浮层
 
 `js` 调用执行期间，屏幕上会出现一层可穿透的提示：四边蓝色光晕、顶部居中横幅，以及光标周围一圈柔光。横幅第一行固定是「DSH 正在控制电脑」，第二行是**这次调用正在做的事**——取自 `js` 工具必填的 `title` 参数，模型本来就要用它写一句面向用户的说明。
@@ -175,6 +186,7 @@ server/helper-launcher.js  剥掉上游强加的 --ghost-cursor-overlay 后再 e
 test/smoke.mjs             端到端：握手、tools/list、一次真实 js 调用、取消通知
 test/overlay.mjs           端到端：调用期间浮层出现，结束后消失
 test/access.mjs            单元：守卫会拒绝、会放行，且授权按会话隔离
+test/fence.mjs             单元：开关的路由会拒绝未认证调用，且失败即拒绝
 skills/                    技能（手动安装到 DSH 技能目录）
 locale/                    插件展示元数据
 docs/                      详情页图片
@@ -185,6 +197,7 @@ cordis.patch.yml           两条注册行
 
 ```sh
 node test/access.mjs     # 13 项检查
+node test/fence.mjs      # 15 项检查
 node test/smoke.mjs      # 5 项检查
 node test/overlay.mjs    # 9 项检查
 ```
