@@ -19,7 +19,7 @@
     "type":  "module",
     "main":  "./index.js",
     "bin":  {
-                "dsh-zcode-cua":  "./server/index.js"
+                "dsh-zcode-cua":  "server/index.js"
             },
     "icon":  "./icon.svg",
     "exports":  {
